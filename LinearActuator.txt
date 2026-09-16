@@ -1,0 +1,81 @@
+import asyncio
+
+# Network Configuration
+LISTEN_HOST = "0.0.0.0"
+LISTEN_PORT = 8800
+
+# Actuator Config
+TRAVEL_SPEED = 10.0  # mm/s
+
+
+# Pre-converted byte objects for direct socket writing
+relays = {
+    "1": {
+        "EXTEND" : {
+            "ON": bytes.fromhex("01 05 00 01 FF 00 DD FA"),
+            "OFF" : bytes.fromhex("01 05 00 01 00 00 9C 0A"), },
+            
+        "RETRACT" : {
+            "ON" : bytes.fromhex("01 05 00 00 FF 00 8C 3A"),
+            "OFF" : bytes.fromhex("01 05 00 00 00 00 CD CA"), },
+    }
+}
+
+# Declared without initialization
+stop_server_event = None
+
+
+async def handle_board(
+    reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+):
+    client_addr = writer.get_extra_info("peername")
+    print(f"[SERVER] Board connected from {client_addr}")
+    Distance_Needed = -50 # Distance in mm (100mm = 10s movement)
+    Relay_Needed = "1";
+    duration = abs(Distance_Needed) / TRAVEL_SPEED
+    direction = ""
+    if Distance_Needed > 0:
+        direction = "EXTEND"
+    else:
+        direction = "RETRACT"
+    try:
+        
+        writer.write(relays[Relay_Needed][direction]["ON"])
+        await writer.drain()
+        await asyncio.sleep(duration)
+        writer.write(relays[Relay_Needed][direction]["OFF"])
+        await writer.drain()
+        stop_server_event.set()
+    except Exception as e:
+        print()
+
+    finally:
+            # Safety fallback: Send OFF command and close connection
+            writer.write
+            await writer.drain()
+            writer.close()
+            await writer.wait_closed()
+            print("[SERVER] Operation completed. Closing connection.")
+            # Unblock main() so the program exits cleanly
+            stop_server_event.set()
+
+
+async def main():
+    global stop_server_event
+    # Initialize Event inside the running loop
+    stop_server_event = asyncio.Event()
+
+    server = await asyncio.start_server(handle_board, LISTEN_HOST, LISTEN_PORT)
+    print(
+        f"[SERVER] Listening on port {LISTEN_PORT}... Waiting for 1 connection."
+    )
+
+    async with server:
+        # Wait until handle_board sets the stop signal
+        await stop_server_event.wait()
+
+    print("[SERVER] Execution finished. Server shut down.")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
