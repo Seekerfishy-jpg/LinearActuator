@@ -7,18 +7,78 @@ LISTEN_PORT = 8800
 # Actuator Config
 TRAVEL_SPEED = 10.0  # mm/s
 
+#Inputs
+inputs = [
+    ["1", 50],
+    ["2", 50],
+    ["3", 50],
+    ["4", 50],
+    ["5", 50],
+    ["6", 50],
+]
 
 # Pre-converted byte objects for direct socket writing
 relays = {
     "1": {
-        "EXTEND" : {
-            "ON": bytes.fromhex("01 05 00 01 FF 00 DD FA"),
-            "OFF" : bytes.fromhex("01 05 00 01 00 00 9C 0A"), },
-            
-        "RETRACT" : {
-            "ON" : bytes.fromhex("01 05 00 00 FF 00 8C 3A"),
-            "OFF" : bytes.fromhex("01 05 00 00 00 00 CD CA"), },
-    }
+        "RETRACT": {
+            "ON": bytes.fromhex("01 05 00 00 FF 00 8C 3A"),  # Relay 1
+            "OFF": bytes.fromhex("01 05 00 00 00 00 CD CA"),  # Relay 1
+        },
+        "EXTEND": {
+            "ON": bytes.fromhex("01 05 00 01 FF 00 DD FA"),  # Relay 2
+            "OFF": bytes.fromhex("01 05 00 01 00 00 9C 0A"),  # Relay 2
+        },
+    },
+    "2": {
+        "RETRACT": {
+            "ON": bytes.fromhex("01 05 00 02 FF 00 2D FA"),  # Relay 3
+            "OFF": bytes.fromhex("01 05 00 02 00 00 6C 0A"),  # Relay 3
+        },
+        "EXTEND": {
+            "ON": bytes.fromhex("01 05 00 03 FF 00 7C 3A"),  # Relay 4
+            "OFF": bytes.fromhex("01 05 00 03 00 00 3D CA"),  # Relay 4
+        },
+    },
+    "3": {
+        "RETRACT": {
+            "ON": bytes.fromhex("01 05 00 04 FF 00 CD FB"),  # Relay 5
+            "OFF": bytes.fromhex("01 05 00 04 00 00 8C 0B"),  # Relay 5
+        },
+        "EXTEND": {
+            "ON": bytes.fromhex("01 05 00 05 FF 00 9C 3B"),  # Relay 6
+            "OFF": bytes.fromhex("01 05 00 05 00 00 DD CB"),  # Relay 6
+        },
+    },
+    "4": {
+        "RETRACT": {
+            "ON": bytes.fromhex("01 05 00 06 FF 00 6C 3B"),  # Relay 7
+            "OFF": bytes.fromhex("01 05 00 06 00 00 2D CB"),  # Relay 7
+        },
+        "EXTEND": {
+            "ON": bytes.fromhex("01 05 00 07 FF 00 3D FB"),  # Relay 8
+            "OFF": bytes.fromhex("01 05 00 07 00 00 7C 0B"),  # Relay 8
+        },
+    },
+    "5": {
+        "RETRACT": {
+            "ON": bytes.fromhex("01 05 00 08 FF 00 C8 3E"),  # Relay 9
+            "OFF": bytes.fromhex("01 05 00 08 00 00 89 CE"),  # Relay 9
+        },
+        "EXTEND": {
+            "ON": bytes.fromhex("01 05 00 09 FF 00 99 FE"),  # Relay 10
+            "OFF": bytes.fromhex("01 05 00 09 00 00 D8 0E"),  # Relay 10
+        },
+    },
+    "6": {
+        "RETRACT": {
+            "ON": bytes.fromhex("01 05 00 0A FF 00 69 FE"),  # Relay 11
+            "OFF": bytes.fromhex("01 05 00 0A 00 00 28 0E"),  # Relay 11
+        },
+        "EXTEND": {
+            "ON": bytes.fromhex("01 05 00 0B FF 00 38 3E"),  # Relay 12
+            "OFF": bytes.fromhex("01 05 00 0B 00 00 79 CE"),  # Relay 12
+        },
+    },
 }
 
 # Declared without initialization
@@ -30,22 +90,34 @@ async def handle_board(
 ):
     client_addr = writer.get_extra_info("peername")
     print(f"[SERVER] Board connected from {client_addr}")
-    Distance_Needed = -50 # Distance in mm (100mm = 10s movement)
-    Relay_Needed = "1";
-    duration = abs(Distance_Needed) / TRAVEL_SPEED
-    direction = ""
-    if Distance_Needed > 0:
-        direction = "EXTEND"
-    else:
-        direction = "RETRACT"
+    
     try:
-        
-        writer.write(relays[Relay_Needed][direction]["ON"])
-        await writer.drain()
-        await asyncio.sleep(duration)
-        writer.write(relays[Relay_Needed][direction]["OFF"])
-        await writer.drain()
-        stop_server_event.set()
+        for relay_needed, distance_needed in inputs:
+            if distance_needed == 0:
+                print(f"[SERVER] Actuator {relay_needed}: Distance is 0, skipping.")
+                continue
+
+            direction = "EXTEND" if distance_needed > 0 else "RETRACT"
+            duration = abs(distance_needed) / TRAVEL_SPEED
+
+            print(
+                f"[SERVER] Actuator {relay_needed}: Moving {direction} "
+                f"for {distance_needed}mm ({duration:.2f}s)"
+            )
+
+            # Turn relay ON
+            writer.write(relays[relay_needed][direction]["ON"])
+            await writer.drain()
+
+            # Wait for travel time
+            await asyncio.sleep(duration)
+
+            # Turn relay OFF
+            writer.write(relays[relay_needed][direction]["OFF"])
+            await writer.drain()
+
+            # Small inter-command delay to allow physical relay settling
+            await asyncio.sleep(0.1)
     except Exception as e:
         print()
 
