@@ -1,0 +1,175 @@
+import asyncio
+import logging
+
+# Set up logging for error visibility
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+
+# Network Configuration
+LISTEN_HOST = "0.0.0.0"
+LISTEN_PORT = 8800
+
+# Actuator Config
+TRAVEL_SPEED = 10.0  # mm/s
+
+# Inputs: [actuator_id, distance_mm]
+inputs = [
+    ["1", 50],
+    ["2", 50],
+    ["3", 50],
+    ["4", 50],
+    ["5", 50],
+    ["6", 50],
+]
+
+# Modbus RTU pre-computed command frames
+relays = {
+    "1": {
+        "RETRACT": {
+            "ON": bytes.fromhex("01 05 00 00 FF 00 8C 3A"),
+            "OFF": bytes.fromhex("01 05 00 00 00 00 CD CA"),
+        },
+        "EXTEND": {
+            "ON": bytes.fromhex("01 05 00 01 FF 00 DD FA"),
+            "OFF": bytes.fromhex("01 05 00 01 00 00 9C 0A"),
+        },
+    },
+    "2": {
+        "RETRACT": {
+            "ON": bytes.fromhex("01 05 00 02 FF 00 2D FA"),
+            "OFF": bytes.fromhex("01 05 00 02 00 00 6C 0A"),
+        },
+        "EXTEND": {
+            "ON": bytes.fromhex("01 05 00 03 FF 00 7C 3A"),
+            "OFF": bytes.fromhex("01 05 00 03 00 00 3D CA"),
+        },
+    },
+    "3": {
+        "RETRACT": {
+            "ON": bytes.fromhex("01 05 00 04 FF 00 CD FB"),
+            "OFF": bytes.fromhex("01 05 00 04 00 00 8C 0B"),
+        },
+        "EXTEND": {
+            "ON": bytes.fromhex("01 05 00 05 FF 00 9C 3B"),
+            "OFF": bytes.fromhex("01 05 00 05 00 00 DD CB"),
+        },
+    },
+    "4": {
+        "RETRACT": {
+            "ON": bytes.fromhex("01 05 00 06 FF 00 6C 3B"),
+            "OFF": bytes.fromhex("01 05 00 06 00 00 2D CB"),
+        },
+        "EXTEND": {
+            "ON": bytes.fromhex("01 05 00 07 FF 00 3D FB"),
+            "OFF": bytes.fromhex("01 05 00 07 00 00 7C 0B"),
+        },
+    },
+    "5": {
+        "RETRACT": {
+            "ON": bytes.fromhex("01 05 00 08 FF 00 C8 3E"),
+            "OFF": bytes.fromhex("01 05 00 08 00 00 89 CE"),
+        },
+        "EXTEND": {
+            "ON": bytes.fromhex("01 05 00 09 FF 00 99 FE"),
+            "OFF": bytes.fromhex("01 05 00 09 00 00 D8 0E"),
+        },
+    },
+    "6": {
+        "RETRACT": {
+            "ON": bytes.fromhex("01 05 00 0A FF 00 69 FE"),
+            "OFF": bytes.fromhex("01 05 00 0A 00 00 28 0E"),
+        },
+        "EXTEND": {
+            "ON": bytes.fromhex("01 05 00 0B FF 00 38 3E"),
+            "OFF": bytes.fromhex("01 05 00 0B 00 00 79 CE"),
+        },
+    },
+}
+
+stop_server_event: asyncio.Event = None
+
+
+async def send_cmd(writer: asyncio.StreamWriter, reader: asyncio.StreamReader, cmd: bytes):
+    """Sends a Modbus packet and drains the echo/response back to clear socket buffer."""
+    writer.write(cmd)
+    await writer.drain()
+    try:
+        # Standard Modbus RTU Write Single Coil response is 8 bytes
+        await asyncio.wait_for(reader.read(8), timeout=1.0)
+    except asyncio.TimeoutError:
+        logging.warning("No Modbus response received within timeout.")
+
+
+async def emergency_shutdown(writer: asyncio.StreamWriter, reader: asyncio.StreamReader):
+    """Turns off ALL relay channels sequentially to ensure hardware remains in a safe state."""
+    logging.info("[SAFETY] Executing emergency shutdown on all relays...")
+    for act_id, dirs in relays.items():
+        for dir_key, state in dirs.items():
+            try:
+                await send_cmd(writer, reader, state["OFF"])
+            except Exception as e:
+                logging.error(f"Failed to send OFF for Actuator {act_id} ({dir_key}): {e}")
+
+
+async def handle_board(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+    client_addr = writer.get_extra_info("peername")
+    logging.info(f"Board connected from {client_addr}")
+
+    current_actuator = None
+    current_direction = None
+
+    try:
+        for relay_needed, distance_needed in inputs:
+            if distance_needed == 0:
+                logging.info(f"Actuator {relay_needed}: Distance is 0, skipping.")
+                continue
+
+            current_actuator = relay_needed
+            current_direction = "EXTEND" if distance_needed > 0 else "RETRACT"
+            duration = abs(distance_needed) / TRAVEL_SPEED
+
+            logging.info(
+                f"Actuator {relay_needed}: Moving {current_direction} "
+                f"for {distance_needed}mm ({duration:.2f}s)"
+            )
+
+            # Turn Relay ON
+            await send_cmd(writer, reader, relays[relay_needed][current_direction]["ON"])
+
+            # Wait for mechanical travel time
+            await asyncio.sleep(duration)
+
+            # Turn Relay OFF
+            await send_cmd(writer, reader, relays[relay_needed][current_direction]["OFF"])
+
+            # Interlock pause between commands
+            await asyncio.sleep(0.2)
+
+    except Exception as e:
+        logging.error(f"Error during execution loop: {e}", exc_info=True)
+    finally:
+        # Turn off all channels regardless of success or failure
+        await emergency_shutdown(writer, reader)
+
+        writer.close()
+        await writer.wait_closed()
+        logging.info("Connection closed successfully.")
+        
+        if stop_server_event:
+            stop_server_event.set()
+
+
+async def main():
+    global stop_server_event
+    stop_server_event = asyncio.Event()
+
+    server = await asyncio.start_server(handle_board, LISTEN_HOST, LISTEN_PORT)
+    logging.info(f"Listening on port {LISTEN_PORT}... Waiting for relay board connection.")
+
+    async with server:
+        await stop_server_event.wait()
+
+    logging.info("Server shut down cleanly.")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
