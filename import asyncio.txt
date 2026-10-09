@@ -98,57 +98,62 @@ async def emergency_shutdown():
             await send_cmd(relays[act_id][direction]["OFF"])
 
 
-async def async_get_line(prompt: str) -> str:
-    print(prompt, end="", flush=True)
-    loop = asyncio.get_running_loop()
-    reader = asyncio.StreamReader()
-    protocol = asyncio.StreamReaderProtocol(reader)
-    await loop.connect_read_pipe(lambda: protocol, sys.stdin)
-    line = await reader.readline()
-    return line.decode().strip()
-
-
 async def run_auto_sequence(instance_to_index):
     global current_mode, e_stop_triggered
 
-    print("\n--- ENTERING AUTOMATED SEQUENCE MODE ---")
+    print("\n==========================================")
+    print("      AUTOMATED SEQUENCE MODE (AUTO)      ")
+    print("==========================================")
+
+    # --- STEP 1: Collect all 6 inputs upfront (Stationary, no motion) ---
     auto_inputs = []
+    print("\n[STEP 1] Enter target distances for each relay.")
+    print("Type distance in mm (e.g., 50 for EXTEND, -30 for RETRACT, 0 to SKIP).")
+    print("Type 'q' at any prompt to cancel and return to MANUAL mode.\n")
 
     for i in range(1, 7):
         if current_mode != "AUTO" or e_stop_triggered:
-            print("[AUTO] Cancelled.")
+            print("[AUTO] Sequence setup cancelled.")
             return
 
-        val_raw = await async_get_line(f"Enter distance for Relay {i} (mm) [or 'q']: ")
+        pygame.event.pump()  # Keeps Pygame window active while waiting for keyboard
+        val_raw = input(f"Relay {i} Distance (mm) [or 'q']: ").strip()
+
         if val_raw.lower() == 'q':
             current_mode = "MANUAL"
-            print("[AUTO] Exiting to MANUAL mode.")
+            print("\n[SYSTEM] Returning to MANUAL mode...")
             return
 
         try:
             dist = float(val_raw)
         except ValueError:
+            print("  -> Invalid input! Defaulting to 0 mm (SKIP).")
             dist = 0.0
+
         auto_inputs.append((str(i), dist))
 
-    print("\n[AUTO] Starting movement sequence...")
+    # --- STEP 2: Execute relay movements sequentially ---
+    print("\n[STEP 2] Starting physical movement sequence...")
+    print("Controller overrides: Button 13 -> MANUAL MODE | Button 15 -> EMERGENCY STOP\n")
+
     for relay_needed, distance_needed in auto_inputs:
         if current_mode != "AUTO" or e_stop_triggered:
-            print("[AUTO] Sequence interrupted!")
+            print("[AUTO] Sequence interrupted by user!")
             break
 
         if distance_needed == 0:
-            print(f"[AUTO] Relay {relay_needed}: Distance 0, skipping.")
+            print(f"[AUTO] Relay {relay_needed}: 0 mm -> Skipping.")
             continue
 
         direction = "EXTEND" if distance_needed > 0 else "RETRACT"
         duration = abs(distance_needed) / TRAVEL_SPEED
 
-        print(f"[AUTO] Relay {relay_needed}: Moving {direction} for {abs(distance_needed)}mm ({duration:.2f}s)")
+        print(f"[AUTO] Relay {relay_needed}: Moving {direction} ({abs(distance_needed)} mm @ {duration:.2f}s)...")
         await send_cmd(relays[relay_needed][direction]["ON"])
 
         start_time = asyncio.get_running_loop().time()
         while asyncio.get_running_loop().time() - start_time < duration:
+            # Poll controller events mid-movement so buttons remain active
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     sys.exit(0)
@@ -157,28 +162,41 @@ async def run_auto_sequence(instance_to_index):
                     if idx is not None and event.button in button_mapping[idx]:
                         btn = button_mapping[idx][event.button]
                         if btn == 13:
+                            print("\n[SYSTEM] Button 13 pressed -> Aborting AUTO mode!")
                             current_mode = "MANUAL"
                         elif btn == 15:
                             asyncio.create_task(emergency_shutdown())
 
+            # Immediate exit if mode changed or E-Stop pressed
             if current_mode != "AUTO" or e_stop_triggered:
                 await send_cmd(relays[relay_needed][direction]["OFF"])
+                print(f"[AUTO] Relay {relay_needed} stopped early.")
                 return
+
             await asyncio.sleep(0.01)
 
+        # Turn off relay when target duration completes
         await send_cmd(relays[relay_needed][direction]["OFF"])
         await asyncio.sleep(0.1)
 
+    # --- STEP 3: Sequence finished -> Prompt for next set ---
     if current_mode == "AUTO" and not e_stop_triggered:
-        print("[AUTO] Sequence completed successfully.\n")
+        print("\n[STEP 3] Sequence completed successfully!")
+        pygame.event.pump()
+        choice = input("\nRun another auto sequence? [Y/n or 'q' for manual]: ").strip().lower()
+        if choice in ('n', 'q'):
+            current_mode = "MANUAL"
+            print("[SYSTEM] Switching to MANUAL mode...\n")
 
 
 async def poll_joysticks(instance_to_index):
     global current_mode, e_stop_triggered
 
     print("\n==========================================")
-    print("SYSTEM READY IN MANUAL MODE")
+    print("      SYSTEM READY IN MANUAL MODE         ")
     print("Keep the Pygame window focused!")
+    print("Buttons 1-12: Rocker Switches")
+    print("Button 13: Manual Mode | Button 14: Auto Mode | Button 15: E-Stop")
     print("==========================================\n")
 
     while True:
@@ -210,7 +228,7 @@ async def poll_joysticks(instance_to_index):
                             print("[SYSTEM] Button 16 (Reserved)")
                             continue
 
-                    # Direct Manual Control (Rocker Switch)
+                    # Direct Manual Control via Rocker Switch (Buttons 1-12)
                     if current_mode == "MANUAL" and not e_stop_triggered and btn <= 12:
                         power = "ON" if event.type == pygame.JOYBUTTONDOWN else "OFF"
                         if btn % 2 == 1:
@@ -251,9 +269,11 @@ async def handle_board(reader: asyncio.StreamReader, writer: asyncio.StreamWrite
 async def main():
     instance_to_index = init_joysticks()
 
+    # Start TCP server in background
     server = await asyncio.start_server(handle_board, LISTEN_HOST, LISTEN_PORT)
     print(f"[SERVER] Listening on port {LISTEN_PORT}... Waiting for Relay Board connection.")
 
+    # Run joystick polling immediately
     asyncio.create_task(poll_joysticks(instance_to_index))
 
     async with server:
