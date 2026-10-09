@@ -14,8 +14,12 @@ LISTEN_PORT = 8800
 TRAVEL_SPEED = 10.0  # mm/s
 
 # Global System State
-current_mode = "MANUAL"  # "MANUAL" or "AUTO"
+current_mode = "MANUAL"  # Default mode: MANUAL
 e_stop_triggered = False
+
+# Active network connection writer reference
+active_writer = None
+active_reader = None
 
 # RTU over TCP Modbus Commands
 relays = {
@@ -53,10 +57,10 @@ button_mapping = {
 
 
 def init_joysticks():
-    """Initializes Pygame display + joysticks for hardware event polling."""
+    """Initializes Pygame display + joysticks."""
     pygame.init()
     pygame.display.set_caption("Actuator Controller Window")
-    pygame.display.set_mode((250, 100))  # Small Pygame window to keep event loop active
+    pygame.display.set_mode((300, 100))  # Window needed for event pumping
 
     pygame.joystick.init()
     if pygame.joystick.get_count() < 2:
@@ -70,6 +74,11 @@ def init_joysticks():
 
     instance_to_index[joysticks[0].get_instance_id()] = 0
     instance_to_index[joysticks[1].get_instance_id()] = 1
+
+    # Clear startup input noise
+    pygame.event.pump()
+    pygame.event.clear()
+
     return instance_to_index
 
 
@@ -79,19 +88,19 @@ async def async_input(prompt: str) -> str:
     return await loop.run_in_executor(None, input, prompt)
 
 
-async def send_cmd(writer: asyncio.StreamWriter, reader: asyncio.StreamReader, cmd: bytes):
-    """Sends raw bytes over network socket."""
-    if writer.is_closing():
-        return
-    writer.write(cmd)
-    await writer.drain()
-    try:
-        await asyncio.wait_for(reader.read(8), timeout=0.1)
-    except asyncio.TimeoutError:
-        pass
+async def send_cmd(cmd: bytes):
+    """Sends raw bytes over the network socket if connected."""
+    global active_writer, active_reader
+    if active_writer is not None and not active_writer.is_closing():
+        active_writer.write(cmd)
+        await active_writer.drain()
+        try:
+            await asyncio.wait_for(active_reader.read(8), timeout=0.1)
+        except asyncio.TimeoutError:
+            pass
 
 
-async def emergency_shutdown(writer: asyncio.StreamWriter, reader: asyncio.StreamReader):
+async def emergency_shutdown():
     """Emergency Shutoff: Turns off all 12 relay channels immediately."""
     global e_stop_triggered
     e_stop_triggered = True
@@ -99,16 +108,11 @@ async def emergency_shutdown(writer: asyncio.StreamWriter, reader: asyncio.Strea
     for act_id in relays:
         for direction in ["RETRACT", "EXTEND"]:
             cmd_off = relays[act_id][direction]["OFF"]
-            await send_cmd(writer, reader, cmd_off)
+            await send_cmd(cmd_off)
 
 
-def check_special_trigger(instance_to_index, writer, reader):
-    """
-    Non-blocking listener for control buttons 13-16.
-    Returns:
-        (mapped_btn, event_type) for buttons 1-12
-        0 for system buttons or no press
-    """
+def check_special_trigger(instance_to_index):
+    """Non-blocking listener for controls."""
     global current_mode, e_stop_triggered
 
     for event in pygame.event.get():
@@ -130,7 +134,7 @@ def check_special_trigger(instance_to_index, writer, reader):
                     return 0
 
                 elif mapped_btn == 15:
-                    asyncio.create_task(emergency_shutdown(writer, reader))
+                    asyncio.create_task(emergency_shutdown())
                     return 0
 
                 elif mapped_btn == 16:
@@ -150,17 +154,16 @@ def check_special_trigger(instance_to_index, writer, reader):
     return 0
 
 
-async def run_auto_sequence(writer: asyncio.StreamWriter, reader: asyncio.StreamReader, instance_to_index):
+async def run_auto_sequence(instance_to_index):
     """Prompts for target distances and executes sequence."""
     global current_mode, e_stop_triggered
 
     print("\n--- ENTERING AUTOMATED SEQUENCE MODE ---")
     print("Type distance (mm) for each relay, or 'q' to cancel.\n")
 
-    # 1. Collect inputs asynchronously
     auto_inputs = [["1"], ["2"], ["3"], ["4"], ["5"], ["6"]]
     for i in range(len(auto_inputs)):
-        check_special_trigger(instance_to_index, writer, reader)
+        check_special_trigger(instance_to_index)
         if current_mode != "AUTO" or e_stop_triggered:
             print("[AUTO] Cancelled due to mode switch or Emergency Stop.")
             return
@@ -178,10 +181,9 @@ async def run_auto_sequence(writer: asyncio.StreamWriter, reader: asyncio.Stream
         except ValueError:
             auto_inputs[i].append(0.0)
 
-    # 2. Execute sequence
     print("\n[AUTO] Starting movement sequence...")
     for relay_needed, distance_needed in auto_inputs:
-        check_special_trigger(instance_to_index, writer, reader)
+        check_special_trigger(instance_to_index)
         if current_mode != "AUTO" or e_stop_triggered:
             logging.warning("[AUTO] Sequence interrupted!")
             break
@@ -196,82 +198,92 @@ async def run_auto_sequence(writer: asyncio.StreamWriter, reader: asyncio.Stream
         logging.info(f"Relay {relay_needed}: Moving {direction} for {distance_needed}mm ({duration:.2f}s)")
 
         # Turn Relay ON
-        await send_cmd(writer, reader, relays[relay_needed][direction]["ON"])
+        await send_cmd(relays[relay_needed][direction]["ON"])
 
-        # Non-blocking delay with continuously monitored checks
         start_time = asyncio.get_event_loop().time()
         while asyncio.get_event_loop().time() - start_time < duration:
-            check_special_trigger(instance_to_index, writer, reader)
+            check_special_trigger(instance_to_index)
             if current_mode != "AUTO" or e_stop_triggered:
-                await send_cmd(writer, reader, relays[relay_needed][direction]["OFF"])
+                await send_cmd(relays[relay_needed][direction]["OFF"])
                 return
             await asyncio.sleep(0.01)
 
         # Turn Relay OFF
-        await send_cmd(writer, reader, relays[relay_needed][direction]["OFF"])
+        await send_cmd(relays[relay_needed][direction]["OFF"])
         await asyncio.sleep(0.1)
 
     if current_mode == "AUTO" and not e_stop_triggered:
         print("[AUTO] Sequence completed successfully.\n")
 
 
-async def handle_board(reader: asyncio.StreamReader, writer: asyncio.StreamWriter, instance_to_index):
-    global current_mode, e_stop_triggered
+async def handle_board(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+    """Tracks active TCP connection from the Relay Board."""
+    global active_writer, active_reader
+    active_writer = writer
+    active_reader = reader
+
     client_addr = writer.get_extra_info("peername")
-    logging.info(f"Board connected from {client_addr}")
-    logging.info("Controls Active: Buttons 1-12 (Manual) | 13 (Manual Mode) | 14 (Auto Mode) | 15 (E-Stop)")
+    logging.info(f"*** BOARD CONNECTED from {client_addr} ***")
 
     try:
-        while True:
-            res = check_special_trigger(instance_to_index, writer, reader)
-
-            if e_stop_triggered:
-                await asyncio.sleep(0.05)
-                continue
-
-            if current_mode == "MANUAL":
-                if isinstance(res, tuple):
-                    btn, event_type = res
-                    if btn <= 12:
-                        power = "ON" if event_type == pygame.JOYBUTTONDOWN else "OFF"
-
-                        if btn % 2 == 1:
-                            relay_needed = str(btn // 2 + 1)
-                            direction = "RETRACT"
-                        else:
-                            relay_needed = str(btn // 2)
-                            direction = "EXTEND"
-
-                        logging.info(f"Manual | Button: {btn} | Relay: {relay_needed} | Dir: {direction} | Power: {power}")
-                        cmd = relays[relay_needed][direction][power]
-                        await send_cmd(writer, reader, cmd)
-
-            elif current_mode == "AUTO":
-                await run_auto_sequence(writer, reader, instance_to_index)
-
-            await asyncio.sleep(0.01)
-
-    except Exception as e:
-        logging.error(f"Execution error: {e}")
+        await reader.read(100)  # Keep connection open
+    except Exception:
+        pass
     finally:
-        await emergency_shutdown(writer, reader)
-        writer.close()
-        await writer.wait_closed()
+        logging.warning("Board disconnected.")
+        active_writer = None
+        active_reader = None
+
+
+async def control_loop(instance_to_index):
+    """Master loop running immediately on startup."""
+    global current_mode, e_stop_triggered
+
+    logging.info("System Ready in DEFAULT MANUAL MODE.")
+    logging.info("Controls: Buttons 1-12 (Manual) | 13 (Manual Mode) | 14 (Auto Mode) | 15 (E-Stop)")
+
+    while True:
+        res = check_special_trigger(instance_to_index)
+
+        if e_stop_triggered:
+            await asyncio.sleep(0.05)
+            continue
+
+        if current_mode == "MANUAL":
+            if isinstance(res, tuple):
+                btn, event_type = res
+                if btn <= 12:
+                    power = "ON" if event_type == pygame.JOYBUTTONDOWN else "OFF"
+
+                    if btn % 2 == 1:
+                        relay_needed = str(btn // 2 + 1)
+                        direction = "RETRACT"
+                    else:
+                        relay_needed = str(btn // 2)
+                        direction = "EXTEND"
+
+                    logging.info(f"Manual | Button: {btn} | Relay: {relay_needed} | Dir: {direction} | Power: {power}")
+                    cmd = relays[relay_needed][direction][power]
+                    await send_cmd(cmd)
+
+        elif current_mode == "AUTO":
+            await run_auto_sequence(instance_to_index)
+
+        await asyncio.sleep(0.01)
 
 
 async def main():
-    # 1. Initialize hardware joysticks immediately on script startup
+    # 1. Initialize Joysticks immediately
     instance_to_index = init_joysticks()
     logging.info("Pygame Joysticks Initialized Successfully.")
 
-    # 2. Start TCP server listener
-    server = await asyncio.start_server(
-        lambda r, w: handle_board(r, w, instance_to_index),
-        LISTEN_HOST,
-        LISTEN_PORT
-    )
-    logging.info(f"Server listening on {LISTEN_HOST}:{LISTEN_PORT}... Waiting for Ethernet Relay Board connection.")
-    
+    # 2. Start TCP server in background
+    server = await asyncio.start_server(handle_board, LISTEN_HOST, LISTEN_PORT)
+    logging.info(f"Server listening on port {LISTEN_PORT}... (Waiting for Relay Board TCP connection)")
+
+    # 3. Start control loop IMMEDIATELY
+    asyncio.create_task(control_loop(instance_to_index))
+
     async with server:
         await server.serve_forever()
 
