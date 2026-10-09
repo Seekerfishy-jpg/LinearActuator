@@ -1,38 +1,35 @@
-import pygame
-import sys
+import asyncio
 
-pygame.init()
-pygame.display.set_caption("USB Encoder Test - KEEP THIS WINDOW FOCUSED")
-screen = pygame.display.set_mode((400, 150))
-pygame.joystick.init()
+HOST = "0.0.0.0"
+PORT = 8800
 
-count = pygame.joystick.get_count()
-print(f"\nDetected {count} USB controller(s).")
+# Modbus command: Relay 1 RETRACT ON
+RELAY_1_ON = bytes.fromhex("01 05 00 00 FF 00 8C 3A")
+RELAY_1_OFF = bytes.fromhex("01 05 00 00 00 00 CD CA")
 
-if count == 0:
-    print("ERROR: No USB controllers detected by Pygame!")
-    sys.exit()
+async def handle_client(reader, writer):
+    print(f"\n[SUCCESS] Relay board connected from: {writer.get_extra_info('peername')}")
+    
+    print("Testing Relay 1 ON in 2 seconds...")
+    await asyncio.sleep(2)
+    writer.write(RELAY_1_ON)
+    await writer.drain()
+    print("--> Sent Relay 1 ON")
 
-for i in range(count):
-    js = pygame.joystick.Joystick(i)
-    js.init()
-    print(f"Controller {i}: {js.get_name()} | Instance ID: {js.get_instance_id()}")
+    await asyncio.sleep(2)
+    writer.write(RELAY_1_OFF)
+    await writer.drain()
+    print("--> Sent Relay 1 OFF")
+    
+    writer.close()
+    await writer.wait_closed()
+    print("Test complete.")
 
-print("\n--- Move/Toggle your Rocker Switch now ---")
+async def main():
+    server = await asyncio.start_server(handle_client, HOST, PORT)
+    print(f"Server listening on port {PORT}... Waiting for board to connect.")
+    async with server:
+        await server.serve_forever()
 
-clock = pygame.time.Clock()
-while True:
-    for event in pygame.event.get():
-        if event.type == pygame.QUIT:
-            pygame.quit()
-            sys.exit()
-
-        if event.type == pygame.JOYBUTTONDOWN:
-            print(f"[BUTTON DOWN] Controller InstID: {event.instance_id} | Button Index: {event.button}")
-        elif event.type == pygame.JOYBUTTONUP:
-            print(f"[BUTTON UP]   Controller InstID: {event.instance_id} | Button Index: {event.button}")
-
-    # Draw simple text to ensure window updates
-    screen.fill((30, 30, 30))
-    pygame.display.flip()
-    clock.tick(30)
+if __name__ == "__main__":
+    asyncio.run(main())
