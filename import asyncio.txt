@@ -1,7 +1,9 @@
 import asyncio
 import logging
+import sys
+import pygame
 
-# Set up logging for error visibility
+# Set up logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 # Network Configuration
@@ -11,164 +13,248 @@ LISTEN_PORT = 8800
 # Actuator Config
 TRAVEL_SPEED = 10.0  # mm/s
 
-# Inputs: [actuator_id, distance_mm]
-inputs = [
-    ["1", 50],
-    ["2", 50],
-    ["3", 50],
-    ["4", 50],
-    ["5", 50],
-    ["6", 50],
-]
+# System States
+current_mode = "MANUAL"  # "MANUAL" or "AUTO"
+e_stop_triggered = False
 
-# Modbus RTU pre-computed command frames
+# Modbus RTU Commands over TCP
 relays = {
     "1": {
-        "RETRACT": {
-            "ON": bytes.fromhex("01 05 00 00 FF 00 8C 3A"),
-            "OFF": bytes.fromhex("01 05 00 00 00 00 CD CA"),
-        },
-        "EXTEND": {
-            "ON": bytes.fromhex("01 05 00 01 FF 00 DD FA"),
-            "OFF": bytes.fromhex("01 05 00 01 00 00 9C 0A"),
-        },
+        "RETRACT": {"ON": bytes.fromhex("01 05 00 00 FF 00 8C 3A"), "OFF": bytes.fromhex("01 05 00 00 00 00 CD CA")},
+        "EXTEND":  {"ON": bytes.fromhex("01 05 00 01 FF 00 DD FA"), "OFF": bytes.fromhex("01 05 00 01 00 00 9C 0A")},
     },
     "2": {
-        "RETRACT": {
-            "ON": bytes.fromhex("01 05 00 02 FF 00 2D FA"),
-            "OFF": bytes.fromhex("01 05 00 02 00 00 6C 0A"),
-        },
-        "EXTEND": {
-            "ON": bytes.fromhex("01 05 00 03 FF 00 7C 3A"),
-            "OFF": bytes.fromhex("01 05 00 03 00 00 3D CA"),
-        },
+        "RETRACT": {"ON": bytes.fromhex("01 05 00 02 FF 00 2D FA"), "OFF": bytes.fromhex("01 05 00 02 00 00 6C 0A")},
+        "EXTEND":  {"ON": bytes.fromhex("01 05 00 03 FF 00 7C 3A"), "OFF": bytes.fromhex("01 05 00 03 00 00 3D CA")},
     },
     "3": {
-        "RETRACT": {
-            "ON": bytes.fromhex("01 05 00 04 FF 00 CD FB"),
-            "OFF": bytes.fromhex("01 05 00 04 00 00 8C 0B"),
-        },
-        "EXTEND": {
-            "ON": bytes.fromhex("01 05 00 05 FF 00 9C 3B"),
-            "OFF": bytes.fromhex("01 05 00 05 00 00 DD CB"),
-        },
+        "RETRACT": {"ON": bytes.fromhex("01 05 00 04 FF 00 CD FB"), "OFF": bytes.fromhex("01 05 00 04 00 00 8C 0B")},
+        "EXTEND":  {"ON": bytes.fromhex("01 05 00 05 FF 00 9C 3B"), "OFF": bytes.fromhex("01 05 00 05 00 00 DD CB")},
     },
     "4": {
-        "RETRACT": {
-            "ON": bytes.fromhex("01 05 00 06 FF 00 6C 3B"),
-            "OFF": bytes.fromhex("01 05 00 06 00 00 2D CB"),
-        },
-        "EXTEND": {
-            "ON": bytes.fromhex("01 05 00 07 FF 00 3D FB"),
-            "OFF": bytes.fromhex("01 05 00 07 00 00 7C 0B"),
-        },
+        "RETRACT": {"ON": bytes.fromhex("01 05 00 06 FF 00 6C 3B"), "OFF": bytes.fromhex("01 05 00 06 00 00 2D CB")},
+        "EXTEND":  {"ON": bytes.fromhex("01 05 00 07 FF 00 3D FB"), "OFF": bytes.fromhex("01 05 00 07 00 00 7C 0B")},
     },
     "5": {
-        "RETRACT": {
-            "ON": bytes.fromhex("01 05 00 08 FF 00 C8 3E"),
-            "OFF": bytes.fromhex("01 05 00 08 00 00 89 CE"),
-        },
-        "EXTEND": {
-            "ON": bytes.fromhex("01 05 00 09 FF 00 99 FE"),
-            "OFF": bytes.fromhex("01 05 00 09 00 00 D8 0E"),
-        },
+        "RETRACT": {"ON": bytes.fromhex("01 05 00 08 FF 00 0D F8"), "OFF": bytes.fromhex("01 05 00 08 00 00 4C 08")},
+        "EXTEND":  {"ON": bytes.fromhex("01 05 00 09 FF 00 5C 38"), "OFF": bytes.fromhex("01 05 00 09 00 00 1D C8")},
     },
     "6": {
-        "RETRACT": {
-            "ON": bytes.fromhex("01 05 00 0A FF 00 69 FE"),
-            "OFF": bytes.fromhex("01 05 00 0A 00 00 28 0E"),
-        },
-        "EXTEND": {
-            "ON": bytes.fromhex("01 05 00 0B FF 00 38 3E"),
-            "OFF": bytes.fromhex("01 05 00 0B 00 00 79 CE"),
-        },
+        "RETRACT": {"ON": bytes.fromhex("01 05 00 0A FF 00 AC 38"), "OFF": bytes.fromhex("01 05 00 0A 00 00 ED C8")},
+        "EXTEND":  {"ON": bytes.fromhex("01 05 00 0B FF 00 FD F8"), "OFF": bytes.fromhex("01 05 00 0B 00 00 BC 08")},
     },
 }
 
-stop_server_event: asyncio.Event = None
+# Button Mapping for 2 Joysticks (Mapped Button IDs 1-16)
+button_mapping = {
+    0: {0: 1, 1: 2, 2: 3, 3: 4, 4: 5, 5: 6, 6: 7, 7: 8},
+    1: {0: 9, 1: 10, 2: 11, 3: 12, 4: 13, 5: 14, 6: 15, 7: 16},
+}
+
+
+def init_joysticks():
+    pygame.init()
+    pygame.joystick.init()
+    if pygame.joystick.get_count() < 2:
+        logging.error("Check USB Encoders: Less than 2 controllers detected.")
+        sys.exit(1)
+
+    joysticks = [pygame.joystick.Joystick(i) for i in range(2)]
+    instance_to_index = {}
+    for js in joysticks:
+        js.init()
+
+    instance_to_index[joysticks[0].get_instance_id()] = 0
+    instance_to_index[joysticks[1].get_instance_id()] = 1
+    return instance_to_index
 
 
 async def send_cmd(writer: asyncio.StreamWriter, reader: asyncio.StreamReader, cmd: bytes):
-    """Sends a Modbus packet and drains the echo/response back to clear socket buffer."""
+    """Sends command bytes directly over the TCP socket."""
+    if writer.is_closing():
+        return
     writer.write(cmd)
     await writer.drain()
     try:
-        # Standard Modbus RTU Write Single Coil response is 8 bytes
-        await asyncio.wait_for(reader.read(8), timeout=1.0)
+        await asyncio.wait_for(reader.read(8), timeout=0.1)
     except asyncio.TimeoutError:
-        logging.warning("No Modbus response received within timeout.")
+        pass
 
 
 async def emergency_shutdown(writer: asyncio.StreamWriter, reader: asyncio.StreamReader):
-    """Turns off ALL relay channels sequentially to ensure hardware remains in a safe state."""
-    logging.info("[SAFETY] Executing emergency shutdown on all relays...")
-    for act_id, dirs in relays.items():
-        for dir_key, state in dirs.items():
-            try:
-                await send_cmd(writer, reader, state["OFF"])
-            except Exception as e:
-                logging.error(f"Failed to send OFF for Actuator {act_id} ({dir_key}): {e}")
+    """Sends OFF command to all 12 relays immediately."""
+    global e_stop_triggered
+    e_stop_triggered = True
+    logging.critical("!!! EMERGENCY STOP BUTTON 15 TRIGGERED !!! TURNING OFF ALL RELAYS.")
+    
+    for act_id in relays:
+        for direction in ["RETRACT", "EXTEND"]:
+            cmd_off = relays[act_id][direction]["OFF"]
+            await send_cmd(writer, reader, cmd_off)
+
+
+def poll_control_buttons(instance_to_index, writer, reader):
+    """Polls joysticks for Buttons 13-16 in both Manual and Auto modes."""
+    global current_mode, e_stop_triggered
+
+    for event in pygame.event.get():
+        if event.type == pygame.JOYBUTTONDOWN:
+            mapped_idx = instance_to_index.get(event.instance_id)
+            if mapped_idx is not None and event.button in button_mapping[mapped_idx]:
+                btn = button_mapping[mapped_idx][event.button]
+
+                # Button 13: Manual Mode
+                if btn == 13:
+                    if current_mode != "MANUAL":
+                        logging.info("[SYSTEM] Button 13 Pressed -> Switched to MANUAL MODE")
+                        current_mode = "MANUAL"
+                    e_stop_triggered = False
+
+                # Button 14: Auto Mode
+                elif btn == 14:
+                    if current_mode != "AUTO":
+                        logging.info("[SYSTEM] Button 14 Pressed -> Switched to AUTO MODE")
+                        current_mode = "AUTO"
+                    e_stop_triggered = False
+
+                # Button 15: Emergency Stop
+                elif btn == 15:
+                    asyncio.create_task(emergency_shutdown(writer, reader))
+
+                # Button 16: Reserved
+                elif btn == 16:
+                    logging.info("[SYSTEM] Button 16 Pressed (Reserved / Unassigned)")
+
+                # Return the event if it's a Manual mode button (1-12)
+                else:
+                    return btn, event.type
+        elif event.type == pygame.JOYBUTTONUP:
+            mapped_idx = instance_to_index.get(event.instance_id)
+            if mapped_idx is not None and event.button in button_mapping[mapped_idx]:
+                btn = button_mapping[mapped_idx][event.button]
+                if btn <= 12:
+                    return btn, event.type
+
+    return None, None
+
+
+async def run_auto_sequence(writer: asyncio.StreamWriter, reader: asyncio.StreamReader, instance_to_index):
+    """Executes automated inputs until completed or interrupted by Buttons 13 or 15."""
+    global current_mode, e_stop_triggered
+
+    print("\n--- ENTERING AUTOMATED SEQUENCE MODE ---")
+    
+    # 1. Prompt user for distances
+    auto_inputs = [["1"], ["2"], ["3"], ["4"], ["5"], ["6"]]
+    for i in range(len(auto_inputs)):
+        # Check if mode switched or E-stop was pressed during input prompt
+        poll_control_buttons(instance_to_index, writer, reader)
+        if current_mode != "AUTO" or e_stop_triggered:
+            print("[AUTO] Sequence setup cancelled due to mode change / E-STOP.")
+            return
+
+        val = input(f"Enter distance for Relay {i + 1} (mm) [or 'q' to cancel]: ").strip().lower()
+        if val == 'q':
+            current_mode = "MANUAL"
+            return
+        try:
+            auto_inputs[i].append(float(val))
+        except ValueError:
+            auto_inputs[i].append(0.0)
+
+    # 2. Execute movement sequence
+    print("\n[AUTO] Executing sequence...")
+    for relay_needed, distance_needed in auto_inputs:
+        poll_control_buttons(instance_to_index, writer, reader)
+        if current_mode != "AUTO" or e_stop_triggered:
+            logging.warning("[AUTO] Sequence interrupted!")
+            break
+
+        if distance_needed == 0:
+            logging.info(f"Relay {relay_needed}: Distance is 0, skipping.")
+            continue
+
+        direction = "EXTEND" if distance_needed > 0 else "RETRACT"
+        duration = abs(distance_needed) / TRAVEL_SPEED
+
+        logging.info(f"Relay {relay_needed}: Moving {direction} for {distance_needed}mm ({duration:.2f}s)")
+
+        # Turn Relay ON
+        await send_cmd(writer, reader, relays[relay_needed][direction]["ON"])
+
+        # Wait duration while constantly checking for Buttons 13 / 15
+        start_time = asyncio.get_event_loop().time()
+        while asyncio.get_event_loop().time() - start_time < duration:
+            poll_control_buttons(instance_to_index, writer, reader)
+            if current_mode != "AUTO" or e_stop_triggered:
+                # Interrupted: turn relay off immediately and exit loop
+                await send_cmd(writer, reader, relays[relay_needed][direction]["OFF"])
+                return
+            await asyncio.sleep(0.01)
+
+        # Turn Relay OFF
+        await send_cmd(writer, reader, relays[relay_needed][direction]["OFF"])
+        await asyncio.sleep(0.1)
+
+    if current_mode == "AUTO" and not e_stop_triggered:
+        print("[AUTO] Sequence completed successfully.\n")
 
 
 async def handle_board(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+    global current_mode, e_stop_triggered
     client_addr = writer.get_extra_info("peername")
     logging.info(f"Board connected from {client_addr}")
 
-    current_actuator = None
-    current_direction = None
+    instance_to_index = init_joysticks()
+    logging.info("System Ready.")
+    logging.info("Buttons 1-12: Manual Control | 13: Manual Mode | 14: Auto Mode | 15: Emergency Stop")
 
     try:
-        for relay_needed, distance_needed in inputs:
-            if distance_needed == 0:
-                logging.info(f"Actuator {relay_needed}: Distance is 0, skipping.")
+        while True:
+            # Continuously monitor master control buttons 13-16
+            btn, event_type = poll_control_buttons(instance_to_index, writer, reader)
+
+            if e_stop_triggered:
+                # System halted due to E-Stop; require pressing Button 13 or 14 to clear
+                await asyncio.sleep(0.05)
                 continue
 
-            current_actuator = relay_needed
-            current_direction = "EXTEND" if distance_needed > 0 else "RETRACT"
-            duration = abs(distance_needed) / TRAVEL_SPEED
+            if current_mode == "MANUAL":
+                # Manual Relay Control (Buttons 1-12)
+                if btn is not None and btn <= 12:
+                    power = "ON" if event_type == pygame.JOYBUTTONDOWN else "OFF"
 
-            logging.info(
-                f"Actuator {relay_needed}: Moving {current_direction} "
-                f"for {distance_needed}mm ({duration:.2f}s)"
-            )
+                    if btn % 2 == 1:
+                        relay_needed = str(btn // 2 + 1)
+                        direction = "RETRACT"
+                    else:
+                        relay_needed = str(btn // 2)
+                        direction = "EXTEND"
 
-            # Turn Relay ON
-            await send_cmd(writer, reader, relays[relay_needed][current_direction]["ON"])
+                    logging.info(f"Manual | Button: {btn} | Relay: {relay_needed} | Dir: {direction} | Power: {power}")
+                    cmd = relays[relay_needed][direction][power]
+                    await send_cmd(writer, reader, cmd)
 
-            # Wait for mechanical travel time
-            await asyncio.sleep(duration)
+            elif current_mode == "AUTO":
+                # Run Auto Sequence loop
+                await run_auto_sequence(writer, reader, instance_to_index)
 
-            # Turn Relay OFF
-            await send_cmd(writer, reader, relays[relay_needed][current_direction]["OFF"])
-
-            # Interlock pause between commands
-            await asyncio.sleep(0.2)
+            await asyncio.sleep(0.01)
 
     except Exception as e:
-        logging.error(f"Error during execution loop: {e}", exc_info=True)
+        logging.error(f"Execution error: {e}")
     finally:
-        # Turn off all channels regardless of success or failure
         await emergency_shutdown(writer, reader)
-
         writer.close()
         await writer.wait_closed()
-        logging.info("Connection closed successfully.")
-        
-        if stop_server_event:
-            stop_server_event.set()
+        pygame.quit()
 
 
 async def main():
-    global stop_server_event
-    stop_server_event = asyncio.Event()
-
     server = await asyncio.start_server(handle_board, LISTEN_HOST, LISTEN_PORT)
-    logging.info(f"Listening on port {LISTEN_PORT}... Waiting for relay board connection.")
-
+    logging.info(f"Server listening on {LISTEN_HOST}:{LISTEN_PORT}...")
     async with server:
-        await stop_server_event.wait()
-
-    logging.info("Server shut down cleanly.")
+        await server.serve_forever()
 
 
 if __name__ == "__main__":
