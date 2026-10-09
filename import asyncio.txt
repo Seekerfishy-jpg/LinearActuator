@@ -21,37 +21,89 @@ active_reader = None
 # Modbus RTU Commands over TCP
 relays = {
     "1": {
-        "RETRACT": {"ON": bytes.fromhex("01 05 00 00 FF 00 8C 3A"), "OFF": bytes.fromhex("01 05 00 00 00 00 CD CA")},
-        "EXTEND":  {"ON": bytes.fromhex("01 05 00 01 FF 00 DD FA"), "OFF": bytes.fromhex("01 05 00 01 00 00 9C 0A")},
+        "RETRACT": {
+            "ON": bytes.fromhex("01 05 00 00 FF 00 8C 3A"),
+            "OFF": bytes.fromhex("01 05 00 00 00 00 CD CA"),
+        },
+        "EXTEND": {
+            "ON": bytes.fromhex("01 05 00 01 FF 00 DD FA"),
+            "OFF": bytes.fromhex("01 05 00 01 00 00 9C 0A"),
+        },
     },
     "2": {
-        "RETRACT": {"ON": bytes.fromhex("01 05 00 02 FF 00 2D FA"), "OFF": bytes.fromhex("01 05 00 02 00 00 6C 0A")},
-        "EXTEND":  {"ON": bytes.fromhex("01 05 00 03 FF 00 7C 3A"), "OFF": bytes.fromhex("01 05 00 03 00 00 3D CA")},
+        "RETRACT": {
+            "ON": bytes.fromhex("01 05 00 02 FF 00 2D FA"),
+            "OFF": bytes.fromhex("01 05 00 02 00 00 6C 0A"),
+        },
+        "EXTEND": {
+            "ON": bytes.fromhex("01 05 00 03 FF 00 7C 3A"),
+            "OFF": bytes.fromhex("01 05 00 03 00 00 3D CA"),
+        },
     },
     "3": {
-        "RETRACT": {"ON": bytes.fromhex("01 05 00 04 FF 00 CD FB"), "OFF": bytes.fromhex("01 05 00 04 00 00 8C 0B")},
-        "EXTEND":  {"ON": bytes.fromhex("01 05 00 05 FF 00 9C 3B"), "OFF": bytes.fromhex("01 05 00 05 00 00 DD CB")},
+        "RETRACT": {
+            "ON": bytes.fromhex("01 05 00 04 FF 00 CD FB"),
+            "OFF": bytes.fromhex("01 05 00 04 00 00 8C 0B"),
+        },
+        "EXTEND": {
+            "ON": bytes.fromhex("01 05 00 05 FF 00 9C 3B"),
+            "OFF": bytes.fromhex("01 05 00 05 00 00 DD CB"),
+        },
     },
     "4": {
-        "RETRACT": {"ON": bytes.fromhex("01 05 00 06 FF 00 6C 3B"), "OFF": bytes.fromhex("01 05 00 06 00 00 2D CB")},
-        "EXTEND":  {"ON": bytes.fromhex("01 05 00 07 FF 00 3D FB"), "OFF": bytes.fromhex("01 05 00 07 00 00 7C 0B")},
+        "RETRACT": {
+            "ON": bytes.fromhex("01 05 00 06 FF 00 6C 3B"),
+            "OFF": bytes.fromhex("01 05 00 06 00 00 2D CB"),
+        },
+        "EXTEND": {
+            "ON": bytes.fromhex("01 05 00 07 FF 00 3D FB"),
+            "OFF": bytes.fromhex("01 05 00 07 00 00 7C 0B"),
+        },
     },
     "5": {
-        "RETRACT": {"ON": bytes.fromhex("01 05 00 08 FF 00 0D F8"), "OFF": bytes.fromhex("01 05 00 08 00 00 4C 08")},
-        "EXTEND":  {"ON": bytes.fromhex("01 05 00 09 FF 00 5C 38"), "OFF": bytes.fromhex("01 05 00 09 00 00 1D C8")},
+        "RETRACT": {
+            "ON": bytes.fromhex("01 05 00 08 FF 00 C8 3E"),
+            "OFF": bytes.fromhex("01 05 00 08 00 00 89 CE"),
+        },
+        "EXTEND": {
+            "ON": bytes.fromhex("01 05 00 09 FF 00 99 FE"),
+            "OFF": bytes.fromhex("01 05 00 09 00 00 D8 0E"),
+        },
     },
     "6": {
-        "RETRACT": {"ON": bytes.fromhex("01 05 00 0A FF 00 AC 38"), "OFF": bytes.fromhex("01 05 00 0A 00 00 ED C8")},
-        "EXTEND":  {"ON": bytes.fromhex("01 05 00 0B FF 00 FD F8"), "OFF": bytes.fromhex("01 05 00 0B 00 00 BC 08")},
+        "RETRACT": {
+            "ON": bytes.fromhex("01 05 00 0A FF 00 69 FE"),
+            "OFF": bytes.fromhex("01 05 00 0A 00 00 28 0E"),
+        },
+        "EXTEND": {
+            "ON": bytes.fromhex("01 05 00 0B FF 00 38 3E"),
+            "OFF": bytes.fromhex("01 05 00 0B 00 00 79 CE"),
+        },
     },
 }
 
 button_mapping = {
-    0: {0: 1, 1: 2, 2: 3, 3: 4, 4: 5, 5: 6, 6: 7, 7: 8},
-    1: {0: 9, 1: 10, 2: 11, 3: 12, 4: 13, 5: 14, 6: 15, 7: 16},
+    0: {
+        0: 1, 
+        1: 2, 
+        2: 3, 
+        3: 4, 
+        4: 5, 
+        5: 6,
+        6: 7,
+        7: 8
+        },
+    1: {
+        0: 9,
+        1: 10, 
+        2: 11, 
+        3: 12, 
+        4: 13, 
+        5: 14, 
+        6: 15, 
+        7: 16},
 }
-
-
+    
 def init_joysticks():
     pygame.init()
     pygame.display.set_caption("ACTUATOR WINDOW - KEEP FOCUS HERE")
@@ -63,15 +115,16 @@ def init_joysticks():
         logging.error("Less than 2 USB controllers detected!")
         sys.exit(1)
 
+
     instance_to_index = {}
     for i in range(count):
         js = pygame.joystick.Joystick(i)
         js.init()
         instance_to_index[js.get_instance_id()] = i
-        print(f"[INIT] Controller {i}: {js.get_name()} (Instance ID: {js.get_instance_id()})")
-
+        #print(f"[INIT] Controller {i}: {js.get_name()} (Instance ID: {js.get_instance_id()})")
+        print(instance_to_index)
     return instance_to_index
-
+init_joysticks()
 
 async def send_cmd(cmd: bytes):
     global active_writer, active_reader
@@ -88,15 +141,12 @@ async def send_cmd(cmd: bytes):
     except Exception as e:
         print(f"[NETWORK ERROR] Socket exception: {e}")
 
-
 async def emergency_shutdown():
+    TURN_ALL_OFF = bytes.fromhex("01 0F 00 00 00 10 02 00 00 E2 20")
     global e_stop_triggered
     e_stop_triggered = True
     print("\n[CRITICAL] !!! EMERGENCY STOP TRIGGERED !!! TURNING OFF ALL RELAYS.\n")
-    for act_id in relays:
-        for direction in ["RETRACT", "EXTEND"]:
-            await send_cmd(relays[act_id][direction]["OFF"])
-
+    await send_cmd(TURN_ALL_OFF)
 
 async def run_auto_sequence(instance_to_index):
     global current_mode, e_stop_triggered
@@ -105,20 +155,21 @@ async def run_auto_sequence(instance_to_index):
     print("      AUTOMATED SEQUENCE MODE (AUTO)      ")
     print("==========================================")
 
-    # --- STEP 1: Collect all 6 inputs upfront (Stationary, no motion) ---
+    # --- STEP 1: Collect inputs upfront (Type 'q' to quit) ---
     auto_inputs = []
     print("\n[STEP 1] Enter target distances for each relay.")
     print("Type distance in mm (e.g., 50 for EXTEND, -30 for RETRACT, 0 to SKIP).")
-    print("Type 'q' at any prompt to cancel and return to MANUAL mode.\n")
+    print("Type 'q' at any prompt to exit back to MANUAL mode.\n")
 
     for i in range(1, 7):
         if current_mode != "AUTO" or e_stop_triggered:
             print("[AUTO] Sequence setup cancelled.")
             return
 
-        pygame.event.pump()  # Keeps Pygame window active while waiting for keyboard
+        pygame.event.pump()  # Keep Pygame window responsive while typing
         val_raw = input(f"Relay {i} Distance (mm) [or 'q']: ").strip()
 
+        # Keyboard 'q' exit
         if val_raw.lower() == 'q':
             current_mode = "MANUAL"
             print("\n[SYSTEM] Returning to MANUAL mode...")
@@ -153,7 +204,6 @@ async def run_auto_sequence(instance_to_index):
 
         start_time = asyncio.get_running_loop().time()
         while asyncio.get_running_loop().time() - start_time < duration:
-            # Poll controller events mid-movement so buttons remain active
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     sys.exit(0)
@@ -167,7 +217,6 @@ async def run_auto_sequence(instance_to_index):
                         elif btn == 15:
                             asyncio.create_task(emergency_shutdown())
 
-            # Immediate exit if mode changed or E-Stop pressed
             if current_mode != "AUTO" or e_stop_triggered:
                 await send_cmd(relays[relay_needed][direction]["OFF"])
                 print(f"[AUTO] Relay {relay_needed} stopped early.")
@@ -175,11 +224,10 @@ async def run_auto_sequence(instance_to_index):
 
             await asyncio.sleep(0.01)
 
-        # Turn off relay when target duration completes
         await send_cmd(relays[relay_needed][direction]["OFF"])
         await asyncio.sleep(0.1)
 
-    # --- STEP 3: Sequence finished -> Prompt for next set ---
+    # --- STEP 3: Finished sequence -> Prompt for next set ---
     if current_mode == "AUTO" and not e_stop_triggered:
         print("\n[STEP 3] Sequence completed successfully!")
         pygame.event.pump()
@@ -188,65 +236,44 @@ async def run_auto_sequence(instance_to_index):
             current_mode = "MANUAL"
             print("[SYSTEM] Switching to MANUAL mode...\n")
 
-
-async def poll_joysticks(instance_to_index):
-    global current_mode, e_stop_triggered
-
-    print("\n==========================================")
-    print("      SYSTEM READY IN MANUAL MODE         ")
-    print("Keep the Pygame window focused!")
-    print("Buttons 1-12: Rocker Switches")
-    print("Button 13: Manual Mode | Button 14: Auto Mode | Button 15: E-Stop")
-    print("==========================================\n")
-
+async def poll_joysticks():
     while True:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                sys.exit(0)
-
-            if event.type in (pygame.JOYBUTTONDOWN, pygame.JOYBUTTONUP):
-                mapped_idx = instance_to_index.get(event.instance_id)
+                sys.exit("EXIT")
+            if event.type == pygame.JOYBUTTONDOWN or pygame.JOYBUTTONUP:
+                mapped_index = instance_to_index.get(event.instance_id)
                 if mapped_idx is not None and event.button in button_mapping[mapped_idx]:
                     btn = button_mapping[mapped_idx][event.button]
-
-                    # Mode & E-Stop System Buttons
-                    if event.type == pygame.JOYBUTTONDOWN:
-                        if btn == 13:
-                            print("[SYSTEM] Button 13 -> MANUAL MODE")
-                            current_mode = "MANUAL"
-                            e_stop_triggered = False
-                            continue
-                        elif btn == 14:
-                            print("[SYSTEM] Button 14 -> AUTO MODE")
-                            current_mode = "AUTO"
-                            e_stop_triggered = False
-                            continue
-                        elif btn == 15:
-                            asyncio.create_task(emergency_shutdown())
-                            continue
-                        elif btn == 16:
-                            print("[SYSTEM] Button 16 (Reserved)")
-                            continue
-
-                    # Direct Manual Control via Rocker Switch (Buttons 1-12)
-                    if current_mode == "MANUAL" and not e_stop_triggered and btn <= 12:
-                        power = "ON" if event.type == pygame.JOYBUTTONDOWN else "OFF"
-                        if btn % 2 == 1:
-                            relay_needed = str(btn // 2 + 1)
-                            direction = "RETRACT"
-                        else:
-                            relay_needed = str(btn // 2)
-                            direction = "EXTEND"
-
-                        print(f"[MANUAL] Button: {btn} | Relay: {relay_needed} | Dir: {direction} | Power: {power}")
-                        cmd = relays[relay_needed][direction][power]
-                        await send_cmd(cmd)
-
-        if current_mode == "AUTO" and not e_stop_triggered:
+            if event.type == pygame.JOYBUTTONDOWN:
+                if btn == 1:
+                    current_mode = "MANUAL"
+                    e_stop_triggered = False
+                elif btn == 2:
+                    current_mode = "AUTO"
+                    e_stop_triggered = False
+                elif btn == 3:
+                    asyncio.create_task(emergency_shutdown)
+            if current_mode == "MANUAL" and e_stop_triggered == False and btn > 4:
+                if event.type == pygame.JOYBUTTONDOWN:
+                    power = "ON"
+                elif event.type == pygame.JOYBUTTONUP:
+                    power = "OFF"
+                else:
+                    print("Check USB Connections again")
+                if btn % 2 == 0:
+                    direction = "EXTEND"
+                    relay_needed = (btn // 2) - 2
+                else:
+                    direction = "RETRACT"
+                    relay_needed = (btn // 2) - 1
+                print(f"[MANUAL] Button: {btn} | Relay: {relay_needed} | Dir: {direction} | Power: {power}")
+                cmd = relays[relay_needed][direction][power]
+                await send_cmd(cmd)
+        if current_mode == "AUTO" and e_stop_triggered == False:
             await run_auto_sequence(instance_to_index)
-
-        await asyncio.sleep(0.01)
-
+        await asyncio.sleep(1)
+        print("Switching to audo mode")
 
 async def handle_board(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
     global active_writer, active_reader
@@ -264,7 +291,6 @@ async def handle_board(reader: asyncio.StreamReader, writer: asyncio.StreamWrite
         print("\n*** BOARD DISCONNECTED ***\n")
         active_writer = None
         active_reader = None
-
 
 async def main():
     instance_to_index = init_joysticks()
