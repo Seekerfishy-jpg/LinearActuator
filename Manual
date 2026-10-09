@@ -1,21 +1,12 @@
 import asyncio
-import logging
 import sys
 import pygame
-
-# Logging configuration
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 # Network Configuration
 LISTEN_HOST = "0.0.0.0"
 LISTEN_PORT = 8800
 
-# Global Network References
-active_writer = None
-active_reader = None
-e_stop_triggered = False
-
-# Modbus RTU Commands over TCP (12 Relays: ON/OFF)
+# Working Modbus RTU Bytes
 relays = {
     "1": {
         "RETRACT": {"ON": bytes.fromhex("01 05 00 00 FF 00 8C 3A"), "OFF": bytes.fromhex("01 05 00 00 00 00 CD CA")},
@@ -34,16 +25,15 @@ relays = {
         "EXTEND":  {"ON": bytes.fromhex("01 05 00 07 FF 00 3D FB"), "OFF": bytes.fromhex("01 05 00 07 00 00 7C 0B")},
     },
     "5": {
-        "RETRACT": {"ON": bytes.fromhex("01 05 00 08 FF 00 0D F8"), "OFF": bytes.fromhex("01 05 00 08 00 00 4C 08")},
-        "EXTEND":  {"ON": bytes.fromhex("01 05 00 09 FF 00 5C 38"), "OFF": bytes.fromhex("01 05 00 09 00 00 1D C8")},
+        "RETRACT": {"ON": bytes.fromhex("01 05 00 08 FF 00 C8 3E"), "OFF": bytes.fromhex("01 05 00 08 00 00 89 CE")},
+        "EXTEND":  {"ON": bytes.fromhex("01 05 00 09 FF 00 99 FE"), "OFF": bytes.fromhex("01 05 00 09 00 00 D8 0E")},
     },
     "6": {
-        "RETRACT": {"ON": bytes.fromhex("01 05 00 0A FF 00 AC 38"), "OFF": bytes.fromhex("01 05 00 0A 00 00 ED C8")},
-        "EXTEND":  {"ON": bytes.fromhex("01 05 00 0B FF 00 FD F8"), "OFF": bytes.fromhex("01 05 00 0B 00 00 BC 08")},
+        "RETRACT": {"ON": bytes.fromhex("01 05 00 0A FF 00 69 FE"), "OFF": bytes.fromhex("01 05 00 0A 00 00 28 0E")},
+        "EXTEND":  {"ON": bytes.fromhex("01 05 00 0B FF 00 38 3E"), "OFF": bytes.fromhex("01 05 00 0B 00 00 79 CE")},
     },
 }
 
-# Button Mapping for 2 USB Encoders
 button_mapping = {
     0: {0: 1, 1: 2, 2: 3, 3: 4, 4: 5, 5: 6, 6: 7, 7: 8},
     1: {0: 9, 1: 10, 2: 11, 3: 12, 4: 13, 5: 14, 6: 15, 7: 16},
@@ -51,122 +41,66 @@ button_mapping = {
 
 
 def init_joysticks():
-    """Initializes Pygame display window and USB joysticks."""
     pygame.init()
-    pygame.display.set_caption("Manual Relay Control - Keep Window Open")
+    pygame.display.set_caption("Manual Relay Control")
     pygame.display.set_mode((300, 100))
-
     pygame.joystick.init()
+
     if pygame.joystick.get_count() < 2:
-        print("[ERROR] Less than 2 USB controllers detected! Please check hardware connections.")
+        print("[ERROR] Less than 2 USB controllers detected!")
         sys.exit(1)
 
     joysticks = [pygame.joystick.Joystick(i) for i in range(2)]
     instance_to_index = {}
     for js in joysticks:
         js.init()
+        instance_to_index[js.get_instance_id()] = joysticks.index(js)
 
-    instance_to_index[joysticks[0].get_instance_id()] = 0
-    instance_to_index[joysticks[1].get_instance_id()] = 1
     return instance_to_index
 
 
-async def send_cmd(cmd: bytes):
-    """Sends command bytes over TCP socket if board is connected."""
-    global active_writer, active_reader
-    if active_writer is not None and not active_writer.is_closing():
-        try:
-            active_writer.write(cmd)
-            await active_writer.drain()
-            await asyncio.wait_for(active_reader.read(8), timeout=0.1)
-        except Exception:
-            pass
-
-
-async def emergency_shutdown():
-    """Emergency Shutoff: Turns off all 12 relay channels immediately."""
-    global e_stop_triggered
-    e_stop_triggered = True
-    print("\n[CRITICAL] !!! EMERGENCY STOP (BUTTON 15) TRIGGERED !!! TURNING OFF ALL RELAYS.\n")
-    for act_id in relays:
-        for direction in ["RETRACT", "EXTEND"]:
-            await send_cmd(relays[act_id][direction]["OFF"])
-
-
-async def poll_joysticks(instance_to_index):
-    """Main loop: listens for joystick buttons 1-12 (Relays) and Button 15 (E-Stop)."""
-    global e_stop_triggered
-
-    print("\n==========================================")
-    print("MANUAL CONTROL SYSTEM READY")
-    print("Buttons 1-12: Manual Actuator Relays")
-    print("Button 13: Clear E-Stop / Reset")
-    print("Button 15: Emergency Stop (Shut OFF All Relays)")
-    print("==========================================\n")
-
-    while True:
-        pygame.event.pump()  # Keeps Pygame event queue active
-
-        for event in pygame.event.get():
-            if event.type in (pygame.JOYBUTTONDOWN, pygame.JOYBUTTONUP):
-                mapped_idx = instance_to_index.get(event.instance_id)
-                if mapped_idx is not None and event.button in button_mapping[mapped_idx]:
-                    btn = button_mapping[mapped_idx][event.button]
-
-                    # Emergency Stop Check (Button 15)
-                    if event.type == pygame.JOYBUTTONDOWN and btn == 15:
-                        asyncio.create_task(emergency_shutdown())
-                        continue
-
-                    # Reset E-Stop State (Button 13)
-                    if event.type == pygame.JOYBUTTONDOWN and btn == 13:
-                        e_stop_triggered = False
-                        print("[SYSTEM] E-Stop cleared. Normal operation resumed.")
-                        continue
-
-                    # Manual Control (Buttons 1-12)
-                    if not e_stop_triggered and btn <= 12:
-                        power = "ON" if event.type == pygame.JOYBUTTONDOWN else "OFF"
-                        if btn % 2 == 1:
-                            relay_needed = str(btn // 2 + 1)
-                            direction = "RETRACT"
-                        else:
-                            relay_needed = str(btn // 2)
-                            direction = "EXTEND"
-
-                        print(f"[MANUAL] Button: {btn} | Relay: {relay_needed} | Dir: {direction} | Power: {power}")
-                        cmd = relays[relay_needed][direction][power]
-                        await send_cmd(cmd)
-
-        await asyncio.sleep(0.01)
-
-
 async def handle_board(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
-    """Tracks active TCP socket connection from Ethernet Relay Board."""
-    global active_writer, active_reader
-    active_writer = writer
-    active_reader = reader
-    print(f"\n*** ETHERNET RELAY BOARD CONNECTED from {writer.get_extra_info('peername')} ***\n")
+    client_addr = writer.get_extra_info("peername")
+    print(f"[SERVER] Board connected from {client_addr}")
+    instance_to_index = init_joysticks()
+    print("[SERVER] Joysticks Initialized. Ready for manual control.")
+
     try:
-        await reader.read(100)
-    except Exception:
-        pass
+        while True:
+            pygame.event.pump()
+            for event in pygame.event.get():
+                if event.type in (pygame.JOYBUTTONDOWN, pygame.JOYBUTTONUP):
+                    mapped_idx = instance_to_index.get(event.instance_id)
+                    if mapped_idx is not None and event.button in button_mapping[mapped_idx]:
+                        btn = button_mapping[mapped_idx][event.button]
+
+                        if btn <= 12:
+                            power = "ON" if event.type == pygame.JOYBUTTONDOWN else "OFF"
+                            if btn % 2 == 1:
+                                relay_needed = str(btn // 2 + 1)
+                                direction = "RETRACT"
+                            else:
+                                relay_needed = str(btn // 2)
+                                direction = "EXTEND"
+
+                            print(f"[MANUAL] Button {btn} -> Relay {relay_needed} {direction} {power}")
+                            
+                            # Write directly and drain without awaiting reader.read()
+                            writer.write(relays[relay_needed][direction][power])
+                            await writer.drain()
+
+            await asyncio.sleep(0.01)
+
+    except Exception as e:
+        print(f"[ERROR] Disconnected or Exception: {e}")
     finally:
-        print("\n*** ETHERNET RELAY BOARD DISCONNECTED ***\n")
-        active_writer = None
-        active_reader = None
+        writer.close()
+        await writer.wait_closed()
 
 
 async def main():
-    instance_to_index = init_joysticks()
-
-    # Start TCP listener server
     server = await asyncio.start_server(handle_board, LISTEN_HOST, LISTEN_PORT)
-    print(f"[SERVER] Listening on port {LISTEN_PORT}... Waiting for Ethernet Relay Board TCP connection.")
-
-    # Run joystick listener loop
-    asyncio.create_task(poll_joysticks(instance_to_index))
-
+    print(f"[SERVER] Listening on port {LISTEN_PORT}... Waiting for Ethernet Relay Board.")
     async with server:
         await server.serve_forever()
 
