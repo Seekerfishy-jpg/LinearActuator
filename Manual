@@ -25,12 +25,12 @@ relays = {
         "EXTEND":  {"ON": bytes.fromhex("01 05 00 07 FF 00 3D FB"), "OFF": bytes.fromhex("01 05 00 07 00 00 7C 0B")},
     },
     "5": {
-        "RETRACT": {"ON": bytes.fromhex("01 05 00 08 FF 00 C8 3E"), "OFF": bytes.fromhex("01 05 00 08 00 00 89 CE")},
-        "EXTEND":  {"ON": bytes.fromhex("01 05 00 09 FF 00 99 FE"), "OFF": bytes.fromhex("01 05 00 09 00 00 D8 0E")},
+        "RETRACT": {"ON": bytes.fromhex("01 05 00 08 FF 00 C8 3E"), "OFF": bytes.fromhex("01 05 00 08 00 00 4C 08")},
+        "EXTEND":  {"ON": bytes.fromhex("01 05 00 09 FF 00 99 FE"), "OFF": bytes.fromhex("01 05 00 09 00 00 1D C8")},
     },
     "6": {
-        "RETRACT": {"ON": bytes.fromhex("01 05 00 0A FF 00 69 FE"), "OFF": bytes.fromhex("01 05 00 0A 00 00 28 0E")},
-        "EXTEND":  {"ON": bytes.fromhex("01 05 00 0B FF 00 38 3E"), "OFF": bytes.fromhex("01 05 00 0B 00 00 79 CE")},
+        "RETRACT": {"ON": bytes.fromhex("01 05 00 0A FF 00 69 FE"), "OFF": bytes.fromhex("01 05 00 0A 00 00 ED C8")},
+        "EXTEND":  {"ON": bytes.fromhex("01 05 00 0B FF 00 38 3E"), "OFF": bytes.fromhex("01 05 00 0B 00 00 BC 08")},
     },
 }
 
