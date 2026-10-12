@@ -136,17 +136,15 @@ async def handle_board(reader: asyncio.StreamReader, writer: asyncio.StreamWrite
 
 # ---------------------------------------------------------------- auto mode
 def handle_auto_events(instance_to_index):
-    global current_mode
+    # During a move the only controller input honoured is the e-stop.
+    # Every other button is read and discarded, so nothing can change the mode.
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             raise SystemExit(0)
         if event.type != pygame.JOYBUTTONDOWN:
             continue
         btn = logical_button(instance_to_index, event)
-        if btn in (1, 13):
-            logging.info("Button %s -> aborting AUTO mode", btn)
-            current_mode = "MANUAL"
-        elif btn in (3, 15):  # 3 is the e-stop in manual mode, so accept it here too
+        if btn in (3, 15):  # 3 is the e-stop in manual mode, so accept it here too
             spawn(emergency_shutdown())
 
 
@@ -187,7 +185,8 @@ async def run_auto_sequence(instance_to_index):
             auto_inputs.append((str(i), dist))
             break
 
-    print("\nStarting movement. Button 1 or 13 -> MANUAL | Button 3 or 15 -> E-STOP\n")
+    pygame.event.clear()  # drop any button presses made while typing
+    print("\nStarting movement. Button 3 or 15 -> E-STOP\n")
     loop = asyncio.get_running_loop()
 
     for relay_needed, distance in auto_inputs:
@@ -241,10 +240,10 @@ async def poll_joysticks(instance_to_index):
             pressed = event.type == pygame.JOYBUTTONDOWN
 
             # Mode / e-stop buttons
-            if btn in (1, 2, 3):
+            if btn in (1, 2, 3, 4):
                 if not pressed:
                     continue
-                if btn == 3:
+                if btn == 4:
                     spawn(emergency_shutdown())
                 else:
                     await send_cmd(TURN_ALL_OFF)  # nothing stays on across a mode change
@@ -263,10 +262,10 @@ async def poll_joysticks(instance_to_index):
 
                 if pressed:
                     if current_mode != "MANUAL" or e_stop_triggered:
-                        continue  # ignore new motion, but never ignore an OFF
-                    logging.info("[MANUAL] btn %d | relay %s | %s | ON", btn, relay_needed, direction)
-                    await send_cmd(relays[relay_needed][opposite]["OFF"])  # interlock
+                        continue  
+                    
                     await send_cmd(relays[relay_needed][direction]["ON"])
+                    logging.info("[MANUAL] btn %d | relay %s | %s | ON", btn, relay_needed, direction)
                 else:
                     logging.info("[MANUAL] btn %d | relay %s | %s | OFF", btn, relay_needed, direction)
                     await send_cmd(relays[relay_needed][direction]["OFF"])
