@@ -256,7 +256,7 @@ async def poll_joysticks(instance_to_index):
 
             # Manual jog buttons: 5..16 -> relays 1..6, odd = RETRACT, even = EXTEND
             if btn >= 5:
-                relay_needed = str((btn - 5) // 2 + 1)
+                relay_needed = btn - ((btn - 4) // 2) if btn % 2 == 1 else (btn - 4) // 2  + 4
                 direction = "RETRACT" if btn % 2 == 1 else "EXTEND"
                 opposite = "EXTEND" if direction == "RETRACT" else "RETRACT"
 
@@ -295,4 +295,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
-        pass
+        pass    
