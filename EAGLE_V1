@@ -17,6 +17,7 @@ LISTEN_PORT = 8800
 TRAVEL_SPEED = 10.0     # mm/s
 MAX_STROKE_MM = 100.0   # TODO: set to your actuator's real stroke length
 NUM_ACTUATORS = 6
+FIRST_COIL = 4          # relay channel 5 = coil address 4 (channel N = coil N-1)
 
 # ---------------------------------------------------------------- state
 current_mode = "MANUAL"
@@ -51,13 +52,20 @@ def coil_cmd(coil: int, on: bool) -> bytes:
     return frame + crc16(frame)
 
 
-# Relay n: RETRACT = coil 2*(n-1), EXTEND = coil 2*(n-1)+1
+def coil_for(actuator: int, direction: str) -> int:
+    """Actuator 1 = relay channels 5/6, actuator 2 = 7/8 ... actuator 6 = 15/16.
+    Odd channel = RETRACT, even channel = EXTEND. Channel N is coil address N-1."""
+    return FIRST_COIL + 2 * (actuator - 1) + (1 if direction == "EXTEND" else 0)
+
+
+assert coil_for(NUM_ACTUATORS, "EXTEND") < 16, "board only has 16 coils"
+
 relays = {
     str(n): {
-        "RETRACT": {"ON": coil_cmd(2 * (n - 1), True), "OFF": coil_cmd(2 * (n - 1), False)},
-        "EXTEND": {"ON": coil_cmd(2 * (n - 1) + 1, True), "OFF": coil_cmd(2 * (n - 1) + 1, False)},
+        d: {"ON": coil_cmd(coil_for(n, d), True), "OFF": coil_cmd(coil_for(n, d), False)}
+        for d in ("RETRACT", "EXTEND")
     }
-    for n in range(5, NUM_ACTUATORS + 6)
+    for n in range(1, NUM_ACTUATORS + 1)
 }
 
 _all_off_frame = bytes.fromhex("01 0F 00 00 00 10 02 00 00")  # write 16 coils = 0
@@ -144,7 +152,7 @@ def handle_auto_events(instance_to_index):
         if event.type != pygame.JOYBUTTONDOWN:
             continue
         btn = logical_button(instance_to_index, event)
-        if btn in (3, 15):  # 3 is the e-stop in manual mode, so accept it here too
+        if btn in (4, 15):  # 4 is the e-stop in manual mode, so accept it here too
             spawn(emergency_shutdown())
 
 
@@ -160,7 +168,7 @@ async def run_auto_sequence(instance_to_index):
     print("\n==========================================")
     print("      AUTOMATED SEQUENCE MODE (AUTO)      ")
     print("==========================================")
-    print(f"\nEnter target distance in mm for each relay (max +/-{MAX_STROKE_MM:g}).")
+    print(f"\nEnter target distance in mm for each actuator (max +/-{MAX_STROKE_MM:g}).")
     print("Positive = EXTEND, negative = RETRACT, 0 = SKIP, 'q' = back to MANUAL.\n")
 
     auto_inputs = []
@@ -169,7 +177,8 @@ async def run_auto_sequence(instance_to_index):
             if current_mode != "AUTO" or e_stop_triggered:
                 print("[AUTO] Sequence setup cancelled.")
                 return
-            raw = await ask(f"Relay {i} distance (mm) [or 'q']: ")
+            label = f"Actuator {i} (relays {coil_for(i, 'RETRACT') + 1}/{coil_for(i, 'EXTEND') + 1})"
+            raw = await ask(f"{label} distance (mm) [or 'q']: ")
             if raw.lower() == "q":
                 current_mode = "MANUAL"
                 print("\n[SYSTEM] Returning to MANUAL mode...")
@@ -186,7 +195,7 @@ async def run_auto_sequence(instance_to_index):
             break
 
     pygame.event.clear()  # drop any button presses made while typing
-    print("\nStarting movement. Button 3 or 15 -> E-STOP\n")
+    print("\nStarting movement. Button 4 or 15 -> E-STOP\n")
     loop = asyncio.get_running_loop()
 
     for relay_needed, distance in auto_inputs:
@@ -194,12 +203,12 @@ async def run_auto_sequence(instance_to_index):
             print("[AUTO] Sequence interrupted!")
             return
         if distance == 0:
-            print(f"[AUTO] Relay {relay_needed}: 0 mm -> skipping.")
+            print(f"[AUTO] Actuator {relay_needed}: 0 mm -> skipping.")
             continue
 
         direction = "EXTEND" if distance > 0 else "RETRACT"
         duration = abs(distance) / TRAVEL_SPEED
-        print(f"[AUTO] Relay {relay_needed}: {direction} {abs(distance):g} mm ({duration:.2f}s)")
+        print(f"[AUTO] Actuator {relay_needed}: {direction} {abs(distance):g} mm ({duration:.2f}s)")
 
         try:
             start = loop.time()  # start the clock when ON is sent
@@ -207,7 +216,7 @@ async def run_auto_sequence(instance_to_index):
             while loop.time() - start < duration:
                 handle_auto_events(instance_to_index)
                 if current_mode != "AUTO" or e_stop_triggered:
-                    print(f"[AUTO] Relay {relay_needed} stopped early.")
+                    print(f"[AUTO] Actuator {relay_needed} stopped early.")
                     return
                 await asyncio.sleep(0.005)
         finally:
@@ -239,8 +248,8 @@ async def poll_joysticks(instance_to_index):
                 continue
             pressed = event.type == pygame.JOYBUTTONDOWN
 
-            # Mode / e-stop buttons
-            if btn in (1, 2, 3, 4):
+            # Mode / e-stop buttons (button 3 is unused)
+            if btn in (1, 2, 4):
                 if not pressed:
                     continue
                 if btn == 4:
@@ -254,20 +263,18 @@ async def poll_joysticks(instance_to_index):
                     current_mode = new_mode
                 continue
 
-            # Manual jog buttons: 5..16 -> relays 1..6, odd = RETRACT, even = EXTEND
+            # Manual jog buttons: button N drives relay channel N (5..16), odd = RETRACT, even = EXTEND
             if btn >= 5:
-                relay_needed = btn - ((btn - 4) // 2) if btn % 2 == 1 else (btn - 4) // 2  + 4
+                relay_needed = str((btn - 5) // 2 + 1)
                 direction = "RETRACT" if btn % 2 == 1 else "EXTEND"
-                opposite = "EXTEND" if direction == "RETRACT" else "RETRACT"
 
                 if pressed:
                     if current_mode != "MANUAL" or e_stop_triggered:
-                        continue  
-                    
+                        continue  # ignore new motion, but never ignore an OFF
+                    logging.info("[MANUAL] btn/relay channel %d | actuator %s | %s | ON", btn, relay_needed, direction)
                     await send_cmd(relays[relay_needed][direction]["ON"])
-                    logging.info("[MANUAL] btn %d | relay %s | %s | ON", btn, relay_needed, direction)
                 else:
-                    logging.info("[MANUAL] btn %d | relay %s | %s | OFF", btn, relay_needed, direction)
+                    logging.info("[MANUAL] btn/relay channel %d | actuator %s | %s | OFF", btn, relay_needed, direction)
                     await send_cmd(relays[relay_needed][direction]["OFF"])
 
         if current_mode == "AUTO" and not e_stop_triggered:
@@ -295,4 +302,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
-        pass    
+        pass
