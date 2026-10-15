@@ -57,7 +57,7 @@ relays = {
         "RETRACT": {"ON": coil_cmd(2 * (n - 1), True), "OFF": coil_cmd(2 * (n - 1), False)},
         "EXTEND": {"ON": coil_cmd(2 * (n - 1) + 1, True), "OFF": coil_cmd(2 * (n - 1) + 1, False)},
     }
-    for n in range(1, NUM_ACTUATORS + 1)
+    for n in range(5, NUM_ACTUATORS + 6)
 }
 
 _all_off_frame = bytes.fromhex("01 0F 00 00 00 10 02 00 00")  # write 16 coils = 0
