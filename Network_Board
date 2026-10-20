@@ -1,0 +1,127 @@
+"""
+Relay board connection test.
+
+Starts the same TCP server as relay_controller.py (port 8800) and reports:
+  - when the board connects and disconnects
+  - anything the board sends
+  - whether the board still answers a periodic ping
+
+Nothing is switched. The only command sent is a read-only Modbus "read coils"
+query. Unplugging a cable does not close a TCP connection right away, so the
+ping is what tells you the board has actually gone quiet.
+
+Close relay_controller.py first: only one program can own port 8800.
+
+Run:  python test_board_connection.py     (Ctrl+C to quit)
+"""
+import asyncio
+import socket
+import time
+
+LISTEN_HOST = "0.0.0.0"
+LISTEN_PORT = 8800
+PING_INTERVAL = 5.0   # seconds between pings
+REPLY_TIMEOUT = 2.0   # seconds to wait for an answer
+
+board_connected = False
+
+
+def crc16(data: bytes) -> bytes:
+    crc = 0xFFFF
+    for b in data:
+        crc ^= b
+        for _ in range(8):
+            crc = (crc >> 1) ^ 0xA001 if crc & 1 else crc >> 1
+    return crc.to_bytes(2, "little")
+
+
+_read_coils = bytes.fromhex("01 01 00 00 00 10")  # read 16 coils (read-only)
+PING = _read_coils + crc16(_read_coils)
+
+
+def say(msg: str):
+    print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
+
+
+def local_ips():
+    ips = set()
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ips.add(info[4][0])
+    except OSError:
+        pass
+    return sorted(ip for ip in ips if not ip.startswith("127."))
+
+
+async def ping_loop(writer: asyncio.StreamWriter, replies: asyncio.Queue):
+    while True:
+        while not replies.empty():  # drop stale data
+            replies.get_nowait()
+        try:
+            writer.write(PING)
+            await writer.drain()
+            reply = await asyncio.wait_for(replies.get(), REPLY_TIMEOUT)
+            say(f"PING OK - board answered: {reply.hex(' ').upper()}")
+        except asyncio.TimeoutError:
+            say("NO REPLY to ping - connection is open but the board isn't answering")
+        except Exception as e:
+            say(f"Ping failed: {e}")
+            return
+        await asyncio.sleep(PING_INTERVAL)
+
+
+async def handle_board(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+    global board_connected
+    peer = writer.get_extra_info("peername")
+    board_connected = True
+    say(f"*** BOARD CONNECTED from {peer[0]}:{peer[1]} ***")
+
+    replies = asyncio.Queue()
+    ping_task = asyncio.create_task(ping_loop(writer, replies))
+    try:
+        while True:  # this is the only place that reads from the socket
+            data = await reader.read(100)
+            if not data:
+                break
+            say(f"received: {data.hex(' ').upper()}")
+            replies.put_nowait(data)
+    except Exception as e:
+        say(f"Connection error: {e}")
+    finally:
+        ping_task.cancel()
+        board_connected = False
+        say("*** BOARD DISCONNECTED ***")
+        writer.close()
+
+
+async def waiting_message():
+    while True:
+        await asyncio.sleep(5)
+        if not board_connected:
+            say("still waiting for the board to connect...")
+
+
+async def main():
+    try:
+        server = await asyncio.start_server(handle_board, LISTEN_HOST, LISTEN_PORT)
+    except OSError as e:
+        print(f"Could not open port {LISTEN_PORT}: {e}")
+        print("Is relay_controller.py (or another copy of this test) still running?")
+        return
+
+    ips = local_ips()
+    say(f"Listening on port {LISTEN_PORT}. Set the board to connect to: "
+        f"{', '.join(ips) if ips else 'this PC\'s IP address'}")
+    waiter = asyncio.create_task(waiting_message())
+    try:
+        async with server:
+            await server.serve_forever()
+    finally:
+        waiter.cancel()
+
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\nExiting.")
