@@ -249,7 +249,7 @@ async def poll_joysticks(instance_to_index):
             pressed = event.type == pygame.JOYBUTTONDOWN
 
             # Mode / e-stop buttons (button 3 is unused)
-            if btn in (1, 2, 4):
+            if btn in (1, 2, 3):
                 if not pressed:
                     continue
                 if btn == 4:
