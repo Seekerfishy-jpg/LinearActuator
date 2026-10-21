@@ -9,6 +9,9 @@ TRAVEL_SPEED = 10
 def get_inputs():
     auto_inputs = []
     for i in range(1, NUM_ACTUATORS + 1):
-        val = input(f"Actuator {i}: ")
-        auto_inputs.append(val)
+        distance = input(f"Actuator {i}: ")
+        auto_inputs.append(distance)
     return auto_inputs
+
+results = get_inputs()
+    
