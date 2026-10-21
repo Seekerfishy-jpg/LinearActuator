@@ -13,6 +13,8 @@ def test_controllers():
     if count == 0:
         print("[ERROR] No controllers found! Please check your USB connections.")
         sys.exit(1)
+    elif count < 2:
+        print("[WARNING] Less than 2 controllers detected. Check USB connections if you expected 2.")
 
     instance_to_index = {}
     for i in range(count):
@@ -28,6 +30,9 @@ def test_controllers():
     print("==================================================\n")
 
     while True:
+        # Crucial: forces pygame to poll all connected USB devices
+        pygame.event.pump()
+
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit()
