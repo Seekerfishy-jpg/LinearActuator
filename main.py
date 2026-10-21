@@ -10,7 +10,7 @@ Settings are in config.py.
 import asyncio
 import logging
 
-import auto_input
+from auto_input import result
 import manual_input
 import relay_driver as driver
 
